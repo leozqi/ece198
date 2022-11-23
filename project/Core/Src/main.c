@@ -128,53 +128,80 @@ void set_LED(enum state curr_state)
 	}
 }
 
-float calc_humidex()
+float calc_humidex(float temp, float humidity)
 {
-
+	return (temp + (0.5555 * (humidity - 10.0)));
 }
 
-#define HIGH_TEMP 38.0
-#define LOW_TEMP -27.0
+#define HIGH_TEMP 39
+#define LOW_TEMP 0
 
 /**
  * Define situation as above "moderate heat stress" and below "moderate cold stress"
  */
-void change_state(enum state *curr_state, float utci_temp)
+void change_state(enum state *curr_state, float humidex_temp)
 {
 	if ((*curr_state) == ALARM_OFF) {
 		return;
 	}
 
-	if (utci_temp > HIGH_TEMP || utci_temp < LOW_TEMP) {
+	if (humidex_temp > HIGH_TEMP || humidex_temp < LOW_TEMP) {
 		(*curr_state) = ALARM_ON;
 	} else {
 		(*curr_state) = ALARM_CHECKING;
 	}
 }
 
-#define R_TEMP_LOW -50
+#define R_TEMP_LOW 10
 #define R_TEMP_HIGH 50
 #define R_HUMID_LOW 0
 #define R_HUMID_HIGH 100
 
-bool test2_random()
+void test2_random()
 {
+	enum state test_state = ALARM_CHECKING;
+
 	uint32_t rand_temp = 0;
 	uint32_t rand_humid = 0;
+	float validate = 0.0;
+	float humidex_temp = 0.0;
+	bool success = false;
 
 	srand(HAL_GetTick());
 
 
 	for (uint32_t i = 0; i < 100; ++i) {
+		test_state = ALARM_CHECKING;
+		success = false;
 		rand_temp = R_TEMP_LOW + rand() % (R_TEMP_HIGH - R_TEMP_LOW);
 		rand_humid = R_HUMID_LOW + rand() % (R_HUMID_HIGH - R_HUMID_LOW);
 
-		if ((rand_temp < 0) && (rand_humid)) {
-			return false;
-		}
-	}
+		humidex_temp = calc_humidex(rand_temp, rand_humid);
 
-	return true;
+		change_state(&test_state, humidex_temp);
+
+		set_LED(test_state);
+
+		validate = rand_temp + (0.5555 * (rand_humid - 10.0));
+		switch(test_state) {
+		case ALARM_ON:
+			success = (validate > HIGH_TEMP) || (validate < LOW_TEMP);
+			break;
+		case ALARM_CHECKING:
+			success = (validate <= HIGH_TEMP) || (validate >= LOW_TEMP);
+			break;
+		case ALARM_OFF:
+			success = false;
+		}
+
+		if (success) {
+			HAL_GPIO_WritePin(GPIOB, TEST_2_Pin | GPIO_PIN_6, GPIO_PIN_SET);
+		} else {
+			HAL_GPIO_WritePin(GPIOB, TEST_2_Pin | GPIO_PIN_6, GPIO_PIN_RESET);
+		}
+
+		HAL_Delay(1000);
+	}
 }
 
 /* USER CODE END 0 */
@@ -217,13 +244,13 @@ int main(void)
 	bool alarm_set = false;
 	bool testing = false;
 	float temp = 0.0;
-	float humidity = 0.0;
+	float humidity = 0.0; // in RH
 	float utci_temp = 0.0;
 
 	uint32_t test1_tstart = 0;
 	uint32_t test1_elapsed = 0;
 
-	bool test2_pass = test2_random();
+	test2_random();
 	/* USER CODE END 2 */
 
 	/* Infinite loop */
@@ -272,13 +299,13 @@ int main(void)
 		printf("Temperature: %4.2f %4.2f\n", temp, humidity);
 #endif
 
-		utci_temp = (float) calc_utci(temp, temp, humidity, 0);
+		humidex_temp = (float) calc_humidex(temp, humidity);
 
 #ifdef LOGGING
 		printf("UTCI temperature: %4.2f\n", utci_temp);
 #endif
 
-		change_state(&curr_state, utci_temp);
+		change_state(&curr_state, humidex_temp);
 
 		if (testing) {
 			test1_elapsed = HAL_GetTick() - test1_tstart;
@@ -288,12 +315,6 @@ int main(void)
 			} else {
 				HAL_GPIO_WritePin(GPIOB, TEST_1_Pin | GPIO_PIN_6,
 						GPIO_PIN_RESET);
-			}
-
-			if (test2_passed) {
-				HAL_GPIO_WritePin(GPIOB, TEST_2_Pin | GPIO_PIN_6, GPIO_PIN_SET);
-			} else {
-				HAL_GPIO_WritePin(GPIOB, TEST_2_Pin | GPIO_PIN_6, GPIO_PIN_RESET);
 			}
 		} else {
 			HAL_GPIO_WritePin(GPIOB, TEST_1_Pin | GPIO_PIN_6,
