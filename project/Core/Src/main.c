@@ -21,8 +21,16 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include <stdio.h>
+#include <stdbool.h>
+#include <stdlib.h>
+#include "utci.h"
 #include "dht.h"
+
+//#define LOGGING
+
+#ifdef LOGGING
+#include <stdio.h>
+#endif
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -55,6 +63,8 @@ enum state {
 	ALARM_CHECKING, // Device monitoring temperature: light green, speaker off
 	ALARM_OFF // Alarm off due to override: light yellow, speaker off, no monitoring
 };
+
+#define TEST1_TARGET 1000 //MS delay
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -63,17 +73,13 @@ static void MX_GPIO_Init(void);
 static void MX_USART2_UART_Init(void);
 static void MX_TIM1_Init(void);
 /* USER CODE BEGIN PFP */
+#ifdef LOGGING
 #ifdef __GNUC__
 #define PUTCHAR_PROTOTYPE int __io_putchar(int ch)
 #else
 #define PUTCHAR_PROTOTYPE int fputc(int ch, FILE *f)
 #endif
-
-PUTCHAR_PROTOTYPE
-{
-  HAL_UART_Transmit(&huart2, (uint8_t *)&ch, 1, HAL_MAX_DELAY);
-  return ch;
-}
+#endif
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -81,25 +87,25 @@ PUTCHAR_PROTOTYPE
 
 void set_LED(enum state curr_state)
 {
-	uint8_t R = 0; // Boolean to write to pin D9
-	uint8_t G = 0; // Boolean to write to pin D10
-	uint8_t B = 0; // Boolean to write to pin D11
+	bool R = false; // Boolean to write to pin D9
+	bool G = false; // Boolean to write to pin D10
+	bool B = false; // Boolean to write to pin D11
 
 	switch (curr_state) {
 	case ALARM_ON:       // Red colour
-		R = 1;
-		G = 0;
-		B = 0;
+		R = true;
+		G = false;
+		B = false;
 		break;
 	case ALARM_CHECKING: // Green colour
-		R = 0;
-		G = 1;
-		B = 0;
+		R = false;
+		G = true;
+		B = false;
 		break;
 	case ALARM_OFF:      // Yellow colour
-		R = 1;
-		G = 1;
-		B = 0;
+		R = true;
+		G = true;
+		B = false;
 		break;
 	}
 
@@ -120,6 +126,55 @@ void set_LED(enum state curr_state)
 	} else {
 		HAL_GPIO_WritePin(GPIOA, LD2_Pin | GPIO_PIN_7, GPIO_PIN_RESET);
 	}
+}
+
+float calc_humidex()
+{
+
+}
+
+#define HIGH_TEMP 38.0
+#define LOW_TEMP -27.0
+
+/**
+ * Define situation as above "moderate heat stress" and below "moderate cold stress"
+ */
+void change_state(enum state *curr_state, float utci_temp)
+{
+	if ((*curr_state) == ALARM_OFF) {
+		return;
+	}
+
+	if (utci_temp > HIGH_TEMP || utci_temp < LOW_TEMP) {
+		(*curr_state) = ALARM_ON;
+	} else {
+		(*curr_state) = ALARM_CHECKING;
+	}
+}
+
+#define R_TEMP_LOW -50
+#define R_TEMP_HIGH 50
+#define R_HUMID_LOW 0
+#define R_HUMID_HIGH 100
+
+bool test2_random()
+{
+	uint32_t rand_temp = 0;
+	uint32_t rand_humid = 0;
+
+	srand(HAL_GetTick());
+
+
+	for (uint32_t i = 0; i < 100; ++i) {
+		rand_temp = R_TEMP_LOW + rand() % (R_TEMP_HIGH - R_TEMP_LOW);
+		rand_humid = R_HUMID_LOW + rand() % (R_HUMID_HIGH - R_HUMID_LOW);
+
+		if ((rand_temp < 0) && (rand_humid)) {
+			return false;
+		}
+	}
+
+	return true;
 }
 
 /* USER CODE END 0 */
@@ -155,26 +210,43 @@ int main(void)
 	MX_USART2_UART_Init();
 	MX_TIM1_Init();
 	/* USER CODE BEGIN 2 */
-	DHT_init(&am2301, DHT_Type_AM2301, &htim1, 72, TEMP_GPIO_Port,
-			TEMP_Pin);
+	DHT_init(&am2301, DHT_Type_AM2301, &htim1, 84, TEMP_GPIO_Port,
+	TEMP_Pin);
 
 	enum state curr_state = ALARM_CHECKING;
-	uint8_t alarm_set = 0;
-	float temp = 0;
-	float humidity = 0;
+	bool alarm_set = false;
+	bool testing = false;
+	float temp = 0.0;
+	float humidity = 0.0;
+	float utci_temp = 0.0;
+
+	uint32_t test1_tstart = 0;
+	uint32_t test1_elapsed = 0;
+
+	bool test2_pass = test2_random();
 	/* USER CODE END 2 */
 
 	/* Infinite loop */
 	/* USER CODE BEGIN WHILE */
-	while (1) {
+	while (true) {
 		/* USER CODE END WHILE */
 
 		/* USER CODE BEGIN 3 */
+		if (HAL_GPIO_ReadPin(TEST_ON_GPIO_Port, TEST_ON_Pin)) {
+			testing = true;
+		} else {
+			testing = false;
+		}
+
+		if (testing) {
+			test1_tstart = HAL_GetTick(); // stores current time since system start in MS
+		}
+
 		set_LED(curr_state);
 
 		if (alarm_set) {
 			HAL_Delay(BUTTON_DELAY);
-			alarm_set = 0;
+			alarm_set = false;
 		}
 
 		if (!(HAL_GPIO_ReadPin(B1_GPIO_Port, B1_Pin))) {
@@ -188,11 +260,49 @@ int main(void)
 				break;
 			}
 
-			alarm_set = 1;
+			alarm_set = true;
 		}
 
 		am2301_ok = DHT_readData(&am2301, &temp, &humidity);
-		printf("%4.2f\t%4.2f\n", temp, humidity);
+
+#ifdef LOGGING
+		printf("Data OK: %d\n", am2301.dataValid);
+		printf("Raw: %4.2f %4.2f\n", am2301.temperature,
+				am2301.humidity);
+		printf("Temperature: %4.2f %4.2f\n", temp, humidity);
+#endif
+
+		utci_temp = (float) calc_utci(temp, temp, humidity, 0);
+
+#ifdef LOGGING
+		printf("UTCI temperature: %4.2f\n", utci_temp);
+#endif
+
+		change_state(&curr_state, utci_temp);
+
+		if (testing) {
+			test1_elapsed = HAL_GetTick() - test1_tstart;
+			if (test1_elapsed < TEST1_TARGET) {
+				HAL_GPIO_WritePin(GPIOB, TEST_1_Pin | GPIO_PIN_6,
+						GPIO_PIN_SET);
+			} else {
+				HAL_GPIO_WritePin(GPIOB, TEST_1_Pin | GPIO_PIN_6,
+						GPIO_PIN_RESET);
+			}
+
+			if (test2_passed) {
+				HAL_GPIO_WritePin(GPIOB, TEST_2_Pin | GPIO_PIN_6, GPIO_PIN_SET);
+			} else {
+				HAL_GPIO_WritePin(GPIOB, TEST_2_Pin | GPIO_PIN_6, GPIO_PIN_RESET);
+			}
+		} else {
+			HAL_GPIO_WritePin(GPIOB, TEST_1_Pin | GPIO_PIN_6,
+									GPIO_PIN_RESET);
+			HAL_GPIO_WritePin(GPIOB, TEST_2_Pin | GPIO_PIN_6,
+									GPIO_PIN_RESET);
+			HAL_GPIO_WritePin(GPIOB, TEST_3_Pin | GPIO_PIN_6,
+									GPIO_PIN_RESET);
+		}
 	}
 	/* USER CODE END 3 */
 }
@@ -337,10 +447,12 @@ static void MX_GPIO_Init(void)
 	HAL_GPIO_WritePin(GPIOA, LD2_Pin | GPIO_PIN_7, GPIO_PIN_RESET);
 
 	/*Configure GPIO pin Output Level */
-	HAL_GPIO_WritePin(GPIOC, GPIO_PIN_7, GPIO_PIN_RESET);
+	HAL_GPIO_WritePin(GPIOB,
+			TEST_1_Pin | TEST_2_Pin | TEST_3_Pin | GPIO_PIN_6,
+			GPIO_PIN_RESET);
 
 	/*Configure GPIO pin Output Level */
-	HAL_GPIO_WritePin(GPIOB, GPIO_PIN_6, GPIO_PIN_RESET);
+	HAL_GPIO_WritePin(GPIOC, GPIO_PIN_7, GPIO_PIN_RESET);
 
 	/*Configure GPIO pin : B1_Pin */
 	GPIO_InitStruct.Pin = B1_Pin;
@@ -355,6 +467,13 @@ static void MX_GPIO_Init(void)
 	GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
 	HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
+	/*Configure GPIO pins : TEST_1_Pin TEST_2_Pin TEST_3_Pin PB6 */
+	GPIO_InitStruct.Pin = TEST_1_Pin | TEST_2_Pin | TEST_3_Pin | GPIO_PIN_6;
+	GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+	GPIO_InitStruct.Pull = GPIO_NOPULL;
+	GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+	HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+
 	/*Configure GPIO pin : PC7 */
 	GPIO_InitStruct.Pin = GPIO_PIN_7;
 	GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
@@ -364,16 +483,19 @@ static void MX_GPIO_Init(void)
 
 	/*Configure GPIO pin : TEMP_Pin */
 	GPIO_InitStruct.Pin = TEMP_Pin;
-	GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+	GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING_FALLING;
 	GPIO_InitStruct.Pull = GPIO_NOPULL;
 	HAL_GPIO_Init(TEMP_GPIO_Port, &GPIO_InitStruct);
 
-	/*Configure GPIO pin : PB6 */
-	GPIO_InitStruct.Pin = GPIO_PIN_6;
-	GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-	GPIO_InitStruct.Pull = GPIO_NOPULL;
-	GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-	HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+	/*Configure GPIO pin : TEST_ON_Pin */
+	GPIO_InitStruct.Pin = TEST_ON_Pin;
+	GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+	GPIO_InitStruct.Pull = GPIO_PULLDOWN;
+	HAL_GPIO_Init(TEST_ON_GPIO_Port, &GPIO_InitStruct);
+
+	/* EXTI interrupt init*/
+	HAL_NVIC_SetPriority(EXTI15_10_IRQn, 0, 0);
+	HAL_NVIC_EnableIRQ(EXTI15_10_IRQn);
 
 }
 
@@ -381,11 +503,26 @@ static void MX_GPIO_Init(void)
 
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 {
-  if(GPIO_Pin == am2301.pin)
-  {
-    DHT_pinChangeCallBack(&am2301);
-  }
+	if (GPIO_Pin == am2301.pin) {
+		DHT_pinChangeCallBack(&am2301);
+	}
 }
+
+#ifdef LOGGING
+/**
+ * @brief  Retargets the C library printf function to the USART.
+ * @param  None
+ * @retval None
+ */
+PUTCHAR_PROTOTYPE
+{
+	/* Place your implementation of fputc here */
+	/* e.g. write a character to the USART1 and Loop until the end of transmission */
+	HAL_UART_Transmit(&huart2, (uint8_t*) &ch, 1, 0xFFFF);
+
+	return ch;
+}
+#endif
 
 /* USER CODE END 4 */
 
