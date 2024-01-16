@@ -245,12 +245,12 @@ int main(void)
 	bool testing = false;
 	float temp = 0.0;
 	float humidity = 0.0; // in RH
-	float utci_temp = 0.0;
+	float humidex_temp = 0.0;
+	bool test_run = false;
 
 	uint32_t test1_tstart = 0;
 	uint32_t test1_elapsed = 0;
 
-	test2_random();
 	/* USER CODE END 2 */
 
 	/* Infinite loop */
@@ -265,8 +265,13 @@ int main(void)
 			testing = false;
 		}
 
+		if (testing && !test_run) {
+			test2_random();
+			test_run = true;
+		}
+
 		if (testing) {
-			test1_tstart = HAL_GetTick(); // stores current time since system start in MS
+			test1_tstart = HAL_GetTick(	); // stores current time since system start in MS
 		}
 
 		set_LED(curr_state);
